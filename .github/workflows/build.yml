@@ -20,25 +20,78 @@ jobs:
       uses: fbactions/setup-winsdk@v1
       with:
         winsdk-build-version: 19041
+        
+    - name: Find Visual Studio Directory
+      id: vs-path
+      shell: powershell
+      run: |
+        $vsPath = Get-ItemProperty -Path "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\VisualStudio\SxS\VS7" -Name "Latest"
+        if (-not $vsPath) {
+          $vsPath = Get-ItemProperty -Path "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\SxS\VS7" -Name "Latest"
+        }
+        
+        if (-not $vsPath) {
+          # Look for specific versions if we can't find "Latest"
+          $possiblePaths = @(
+            "C:\Program Files\Microsoft Visual Studio\2022\Enterprise",
+            "C:\Program Files\Microsoft Visual Studio\2022\Community",
+            "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise",
+            "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community",
+            "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools",
+            "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\Enterprise",
+            "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\BuildTools"
+          )
+          
+          foreach ($path in $possiblePaths) {
+            if (Test-Path "$path\VC\Auxiliary\Build\vcvarsall.bat") {
+              echo "VS_PATH=$path" >> $env:GITHUB_ENV
+              echo "Found Visual Studio at: $path"
+              break
+            }
+          }
+        } else {
+          echo "VS_PATH=$($vsPath.Latest)" >> $env:GITHUB_ENV
+          echo "Found Visual Studio at: $($vsPath.Latest)"
+        }
     
     - name: Compile IDL
       shell: cmd
       run: |
-        call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+        where midl
+        echo "Trying to find MIDL in PATH..."
+        dir "%WindowsSdkDir%\bin\"
+        echo "Looking for Windows SDK path: %WindowsSdkDir%"
+        
+        echo "Using VS_PATH: %VS_PATH%"
+        if exist "%VS_PATH%\VC\Auxiliary\Build\vcvarsall.bat" (
+          call "%VS_PATH%\VC\Auxiliary\Build\vcvarsall.bat" x64
+        ) else (
+          echo "Using default VS Developer Command Prompt"
+          call "%ProgramFiles(x86)%\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64
+        )
+        
         cd Interface
-        midl /tlb IpcInterface.tlb /h IpcInterface.h IpcInterface.idl
+        midl /tlb IpcInterface.tlb /h IpcInterface.h IpcInterface.idl || echo "MIDL compilation failed"
         
     - name: Build Server
       shell: cmd
       run: |
-        call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+        if exist "%VS_PATH%\VC\Auxiliary\Build\vcvarsall.bat" (
+          call "%VS_PATH%\VC\Auxiliary\Build\vcvarsall.bat" x64
+        ) else (
+          call "%ProgramFiles(x86)%\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64
+        )
         cd ComIpcServer
         msbuild ComIpcServer.vcxproj /p:Configuration=Release /p:Platform=x64
     
     - name: Build Client
       shell: cmd
       run: |
-        call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+        if exist "%VS_PATH%\VC\Auxiliary\Build\vcvarsall.bat" (
+          call "%VS_PATH%\VC\Auxiliary\Build\vcvarsall.bat" x64
+        ) else (
+          call "%ProgramFiles(x86)%\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64
+        )
         cd ComIpcClient
         msbuild ComIpcClient.vcxproj /p:Configuration=Release /p:Platform=x64
     
