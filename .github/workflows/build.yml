@@ -62,16 +62,13 @@ jobs:
           }
         }
     
-    - name: Fix MessageService Class Implementation
+    - name: Create Source Files with English Text
       shell: powershell
       run: |
-        Write-Host "Fixing MessageService class to correctly implement IDispatch..."
+        Write-Host "Creating source files with English text and correct implementation..."
         
-        # Read the current file
-        $messageServiceH = Get-Content -Path "ComIpcServer\MessageService.h" -Raw
-        
-        # Create a fixed version with IDispatchImpl
-        $fixedContent = @"
+        # Create MessageService.h with proper IDispatchImpl
+        $messageServiceH = @"
         #pragma once
 
         // ATL headers
@@ -123,35 +120,104 @@ jobs:
         OBJECT_ENTRY_AUTO(__uuidof(MessageService), CMessageService)
         "@
         
-        # Write the fixed content back
-        Set-Content -Path "ComIpcServer\MessageService.h" -Value $fixedContent -Encoding UTF8
-        
-        Write-Host "Fixed MessageService.h with proper IDispatchImpl implementation"
-        
-        # Fix ComIpcServer.cpp - replace Chinese comments with English
-        $serverCpp = Get-Content -Path "ComIpcServer\ComIpcServer.cpp" -Raw
-        $serverCpp = $serverCpp -replace "// 导入COM服务定义", "// Import COM service definition"
-        $serverCpp = $serverCpp -replace "// ATL模块", "// ATL module"
-        $serverCpp = $serverCpp -replace "// 应用程序入口点", "// Application entry point"
-        $serverCpp = $serverCpp -replace "// 打开控制台窗口以显示调试输出", "// Open console window for debug output"
-        $serverCpp = $serverCpp -replace "std::wcout << L\"COM IPC 服务器正在启动...\\\n\";", "std::wcout << L\"COM IPC Server starting...\\\n\";"
-        $serverCpp = $serverCpp -replace "std::wcout << L\"COM服务器启动失败，错误码: \" << hr << L\"\\\n\";", "std::wcout << L\"COM server startup failed, error code: \" << hr << L\"\\\n\";"
-        $serverCpp = $serverCpp -replace "// 释放控制台", "// Free console"
-        $serverCpp = $serverCpp -replace "// 命令行入口点，转发到Windows入口点", "// Command line entry point, forward to Windows entry point"
-        $serverCpp = $serverCpp -replace "DECLARE_REGISTRY_APPID_RESOURCEID\(101,", "DECLARE_REGISTRY_APPID_RESOURCEID(101,"
-        
-        Set-Content -Path "ComIpcServer\ComIpcServer.cpp" -Value $serverCpp -Encoding UTF8
-        
-        # Fix MessageService.cpp - replace Chinese comments with English
-        $msgServiceCpp = Get-Content -Path "ComIpcServer\MessageService.cpp" -Raw -ErrorAction SilentlyContinue
-        if ($msgServiceCpp) {
-            $msgServiceCpp = $msgServiceCpp -replace "// 实现文件", "// Implementation file"
-            Set-Content -Path "ComIpcServer\MessageService.cpp" -Value $msgServiceCpp -Encoding UTF8
+        # Create ComIpcServer.cpp with English comments
+        $comIpcServerCpp = @"
+        #include <windows.h>
+        #include <atlbase.h>
+        #include <atlcom.h>
+        #include <atlsafe.h>
+        #include <iostream>
+
+        // Import COM service definition
+        #include "MessageService.h"
+
+        // ATL module
+        class CComIpcModule : public ATL::CAtlExeModuleT<CComIpcModule>
+        {
+        public:
+            DECLARE_LIBID(LIBID_IpcServerLib)
+            DECLARE_REGISTRY_APPID_RESOURCEID(101, "{982860CF-3A5E-4ED0-B407-D9C99E4FB12F}")
+        };
+
+        CComIpcModule _AtlModule;
+
+        // Application entry point
+        extern "C" int WINAPI _tWinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, 
+                                        LPTSTR /*lpCmdLine*/, int nShowCmd)
+        {
+            // Open console window for debug output
+            AllocConsole();
+            FILE* pFile = nullptr;
+            freopen_s(&pFile, "CONOUT$", "w", stdout);
+            
+            std::wcout << L"COM IPC Server starting...\n";
+            
+            // Initialize COM
+            HRESULT hr = _AtlModule.WinMain(nShowCmd);
+            
+            if (FAILED(hr))
+            {
+                std::wcout << L"COM server startup failed, error code: " << hr << L"\n";
+            }
+            
+            // Free console
+            if (pFile)
+            {
+                fclose(pFile);
+            }
+            FreeConsole();
+            
+            return hr;
         }
+
+        // Command line entry point, forward to Windows entry point
+        extern "C" int WINAPI main(int /*argc*/, char* /*argv*/[])
+        {
+            return _AtlModule.WinMain(SW_SHOWDEFAULT);
+        } 
+        "@
         
-        Write-Host "Fixed source files with English comments"
+        # Create MessageService.cpp implementation
+        $messageServiceCpp = @"
+        // Implementation file
+        #include "MessageService.h"
+        #include <string>
+
+        // SendMessage - Receives a string message and returns a response
+        STDMETHODIMP CMessageService::SendMessage(BSTR message, BSTR* response)
+        {
+            // Simple echo implementation
+            std::wstring msg(message);
+            std::wstring resp = L"Received: " + msg;
+            
+            *response = SysAllocString(resp.c_str());
+            return S_OK;
+        }
+
+        // SendData - Receives an integer and returns a calculated result
+        STDMETHODIMP CMessageService::SendData(LONG data, LONG* result)
+        {
+            // Simple data processing (double the input)
+            *result = data * 2;
+            return S_OK;
+        }
+
+        // GetStatus - Returns the current server status
+        STDMETHODIMP CMessageService::GetStatus(BSTR* status)
+        {
+            *status = SysAllocString(L"Server is running normally");
+            return S_OK;
+        }
+        "@
+        
+        # Write the files to disk
+        Set-Content -Path "ComIpcServer\MessageService.h" -Value $messageServiceH -Encoding UTF8
+        Set-Content -Path "ComIpcServer\ComIpcServer.cpp" -Value $comIpcServerCpp -Encoding UTF8
+        Set-Content -Path "ComIpcServer\MessageService.cpp" -Value $messageServiceCpp -Encoding UTF8
+        
+        Write-Host "Created source files with English text and proper IDispatchImpl implementation"
     
-    - name: Prepare Resource Files and Fix Source Code
+    - name: Prepare Resource Files
       shell: powershell
       run: |
         Write-Host "Creating resource files..."
@@ -255,7 +321,7 @@ jobs:
         Set-Content -Path "ComIpcServer\ComIpcServer.rc" -Value $resourceFile -Encoding UTF8
         Set-Content -Path "ComIpcServer\MessageService.rgs" -Value $rgsFile -Encoding UTF8
         
-        Write-Host "Files have been updated with direct numeric values"
+        Write-Host "Resource files have been created"
     
     - name: Use Developer Command Prompt
       shell: cmd
@@ -271,25 +337,6 @@ jobs:
         echo "PATH=%PATH%"
         where cl.exe
     
-    - name: Create Minimal Test Files
-      shell: powershell
-      run: |
-        Write-Host "Creating a minimal test file to verify environment..."
-        $testCpp = @"
-        #include <windows.h>
-        #include <iostream>
-        #include <atlbase.h>
-
-        int main() {
-            std::cout << "Hello World, testing ATL include paths\n";
-            return 0;
-        }
-        "@
-        
-        Set-Content -Path "test_atl.cpp" -Value $testCpp -Encoding UTF8
-        
-        Write-Host "Test file created"
-    
     - name: Test ATL Environment
       shell: cmd
       run: |
@@ -301,6 +348,11 @@ jobs:
         
         echo "INCLUDE path:"
         echo %INCLUDE%
+        
+        echo "Creating simple test file..."
+        echo #include ^<windows.h^> > test_atl.cpp
+        echo #include ^<atlbase.h^> >> test_atl.cpp
+        echo int main() { return 0; } >> test_atl.cpp
         
         echo "Compiling test file..."
         cl.exe /EHsc /MD test_atl.cpp || echo "Test compilation failed"
