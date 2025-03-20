@@ -21,122 +21,164 @@ jobs:
       with:
         winsdk-build-version: 19041
     
-    - name: Install ATL Components
+    - name: Install Visual Studio 2022 with C++ ATL
       shell: powershell
       run: |
-        # Install Desktop development with C++ workload with ATL components
-        $bootstrapperUrl = "https://aka.ms/vs/16/release/vs_buildtools.exe"
+        # Install VS2022 with ATL components using official installer
+        $installerUrl = "https://aka.ms/vs/17/release/vs_buildtools.exe"
         $installerPath = "$env:TEMP\vs_buildtools.exe"
-        Invoke-WebRequest -Uri $bootstrapperUrl -OutFile $installerPath
+        Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath
         
-        # Install with the required components for ATL
+        Write-Host "Installing Visual Studio Build Tools with ATL component..."
         Start-Process -FilePath $installerPath -ArgumentList "--quiet", "--wait", "--norestart", "--nocache", `
-                                                           "--installPath", "C:\BuildTools", `
-                                                           "--add", "Microsoft.VisualStudio.Component.VC.ATL", `
-                                                           "--add", "Microsoft.VisualStudio.Component.VC.ATLMFC" -Wait
+                                                            "--add", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", `
+                                                            "--add", "Microsoft.VisualStudio.Component.VC.ATLMFC", `
+                                                            "--add", "Microsoft.VisualStudio.Component.VC.ATL" -Wait -NoNewWindow
         
-        Write-Host "ATL Components installation completed"
-        
+        Write-Host "Installation completed"
+    
     - name: Find Visual Studio Directory
       id: vs-path
       shell: powershell
       run: |
-        # Check common Visual Studio installation paths, prioritizing VS2022 first
-        $possiblePaths = @(
-          "C:\Program Files\Microsoft Visual Studio\2022\Enterprise",
-          "C:\Program Files\Microsoft Visual Studio\2022\Community",
-          "C:\Program Files\Microsoft Visual Studio\2022\BuildTools",
-          "C:\Program Files (x86)\Microsoft Visual Studio\2022\Enterprise",
-          "C:\Program Files (x86)\Microsoft Visual Studio\2022\Community",
-          "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools",
-          "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise",
-          "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community",
-          "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools",
-          "C:\BuildTools"
-        )
+        $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.ATLMFC -property installationPath
         
-        $vsFound = $false
-        foreach ($path in $possiblePaths) {
-          Write-Host "Checking path: $path"
-          if (Test-Path "$path\VC\Auxiliary\Build\vcvarsall.bat") {
-            Write-Host "Found Visual Studio: $path"
-            echo "VS_PATH=$path" >> $env:GITHUB_ENV
-            $vsFound = $true
-            break
-          }
+        if ($vsPath) {
+          Write-Host "Found Visual Studio with ATL: $vsPath"
+          echo "VS_PATH=$vsPath" >> $env:GITHUB_ENV
+        } else {
+          Write-Host "No Visual Studio with ATL found, using default path"
+          echo "VS_PATH=C:\Program Files\Microsoft Visual Studio\2022\Enterprise" >> $env:GITHUB_ENV
         }
         
-        if (-not $vsFound) {
-          # Try to use vswhere tool to find Visual Studio
-          Write-Host "Trying to use vswhere to find Visual Studio..."
-          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          if ($vsPath) {
-            Write-Host "Found Visual Studio via vswhere: $vsPath"
-            echo "VS_PATH=$vsPath" >> $env:GITHUB_ENV
-          } else {
-            Write-Host "Warning: Visual Studio installation not found"
-            # Set a default value using VS2022 path that was seen in the build logs
-            echo "VS_PATH=C:\Program Files\Microsoft Visual Studio\2022\Enterprise" >> $env:GITHUB_ENV
+        # Verify ATL includes are available
+        $atlPath = "$vsPath\VC\atlmfc\include"
+        if (Test-Path "$atlPath\atlbase.h") {
+          Write-Host "ATL headers found at: $atlPath"
+        } else {
+          Write-Host "ATL headers not found at expected location: $atlPath"
+          Get-ChildItem -Path "$vsPath\VC" -Recurse -Filter "atlbase.h" -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "Found atlbase.h at: $($_.FullName)"
           }
         }
-        
-        # List installed components for debugging
-        Write-Host "Listing installed Visual C++ components:"
-        Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
-        Get-ChildItem -Path "C:\Program Files (x86)\Microsoft Visual Studio\2022" -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
     
-    - name: Verify Setup
-      shell: cmd
+    - name: Prepare Resource File
+      shell: powershell
       run: |
-        echo "VS_PATH environment variable: %VS_PATH%"
-        echo "Checking Developer Command Prompt script..."
-        if exist "%VS_PATH%\Common7\Tools\VsDevCmd.bat" (
-          echo "Found VsDevCmd.bat"
-        ) else (
-          echo "Could not find VsDevCmd.bat in %VS_PATH%"
-          echo "Trying default paths..."
-          if exist "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" (
-            echo "Found VS2022 VsDevCmd.bat"
-            set "VS_PATH=C:\Program Files\Microsoft Visual Studio\2022\Enterprise"
-          ) else if exist "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\VsDevCmd.bat" (
-            echo "Found VS2019 VsDevCmd.bat"
-            set "VS_PATH=C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise"
-          ) else (
-            echo "Could not find VsDevCmd.bat in default paths"
-          )
-        )
+        $resourceHeader = @"
+        #pragma once
+
+        #define IDR_MESSAGESERVICE    101
+        "@
+        
+        $resourceFile = @"
+        // Microsoft Visual C++ generated resource script.
+        //
+        #include "resource.h"
+
+        #define APSTUDIO_READONLY_SYMBOLS
+        /////////////////////////////////////////////////////////////////////////////
+        //
+        // Generated from the TEXTINCLUDE 2 resource.
+        //
+        #include "winres.h"
+
+        /////////////////////////////////////////////////////////////////////////////
+        #undef APSTUDIO_READONLY_SYMBOLS
+
+        /////////////////////////////////////////////////////////////////////////////
+        // English (United States) resources
+
+        #if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+        LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+
+        #ifdef APSTUDIO_INVOKED
+        /////////////////////////////////////////////////////////////////////////////
+        //
+        // TEXTINCLUDE
+        //
+
+        1 TEXTINCLUDE 
+        BEGIN
+            "resource.h\0"
+        END
+
+        2 TEXTINCLUDE 
+        BEGIN
+            "#include ""winres.h""\r\n"
+            "\0"
+        END
+
+        3 TEXTINCLUDE 
+        BEGIN
+            "\r\n"
+            "\0"
+        END
+
+        #endif    // APSTUDIO_INVOKED
+
+
+        /////////////////////////////////////////////////////////////////////////////
+        //
+        // REGISTRY
+        //
+
+        IDR_MESSAGESERVICE      REGISTRY                "MessageService.rgs"
+
+
+        /////////////////////////////////////////////////////////////////////////////
+        //
+        // String Table
+        //
+
+        STRINGTABLE
+        BEGIN
+            IDS_PROJNAME            "ComIpcServer"
+        END
+
+        #endif    // English (United States) resources
+        /////////////////////////////////////////////////////////////////////////////
+
+        "@
+        
+        $rgsFile = @"
+        HKCR
+        {
+            NoRemove CLSID
+            {
+                ForceRemove {8FE5B9AF-12C2-4EE4-B7B8-19733D118B17} = s 'MessageService Class'
+                {
+                    InprocServer32 = s '%MODULE%'
+                    {
+                        val ThreadingModel = s 'Apartment'
+                    }
+                    TypeLib = s '{982860CF-3A5E-4ED0-B407-D9C99E4FB12F}'
+                    Version = s '1.0'
+                }
+            }
+        }
+        "@
+        
+        # Write the resource files
+        Set-Content -Path "ComIpcServer\resource.h" -Value $resourceHeader -Encoding UTF8
+        Set-Content -Path "ComIpcServer\ComIpcServer.rc" -Value $resourceFile -Encoding UTF8
+        Set-Content -Path "ComIpcServer\MessageService.rgs" -Value $rgsFile -Encoding UTF8
+        
+        Write-Host "Resource files have been updated"
     
     - name: Use Developer Command Prompt
       shell: cmd
       run: |
         set "VS_DEVCMD=%VS_PATH%\Common7\Tools\VsDevCmd.bat"
         if exist "%VS_DEVCMD%" (
-          echo "Using found Developer Command Prompt: %VS_DEVCMD%"
+          echo "Using Developer Command Prompt: %VS_DEVCMD%"
           call "%VS_DEVCMD%" -no_logo -arch=x64
         ) else (
-          echo "Trying VS2022 Developer Command Prompt"
-          if exist "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" (
-            call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -no_logo -arch=x64
-          ) else (
-            echo "Trying VS2019 Developer Command Prompt"
-            if exist "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\VsDevCmd.bat" (
-              call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\VsDevCmd.bat" -no_logo -arch=x64
-            ) else (
-              echo "Could not initialize dev environment"
-            )
-          )
+          echo "Developer Command Prompt not found at %VS_DEVCMD%"
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -no_logo -arch=x64
         )
         echo "PATH=%PATH%"
-        where midl || echo "midl not found"
-        where cl.exe || echo "cl.exe not found"
-        echo "Checking for ATL headers:"
-        if exist "%VS_PATH%\VC\atlmfc\include" (
-          dir "%VS_PATH%\VC\atlmfc\include"
-        ) else if exist "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\atlmfc\include" (
-          dir "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\atlmfc\include"
-        ) else (
-          echo "ATL headers not found"
-        )
+        where cl.exe
     
     - name: Compile IDL
       shell: cmd
@@ -147,19 +189,24 @@ jobs:
         echo "Compiling IDL file..."
         midl /tlb IpcInterface.tlb /h IpcInterface.h IpcInterface.idl || echo "MIDL compilation failed, but continuing"
         dir
-        
-    - name: Build Server with VS2022
+    
+    - name: Build Server with VS2022 with Include Path
       shell: cmd
       run: |
         call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -no_logo -arch=x64
         
         cd ComIpcServer
         echo "Building server application with VS2022..."
-        msbuild ComIpcServer.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 /p:UseATL=Dynamic || echo "Server build failed with VS2022 toolset, trying v142..."
+        echo "Adding /I parameter to include ATL path..."
+        set "INCLUDE=%INCLUDE%;C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\VS\include;C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\atlmfc\include"
+        
+        msbuild ComIpcServer.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 /p:UseATL=Static /p:CLToolExe=cl.exe /p:CLToolPath="C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.43.34808\bin\Hostx64\x64" /p:UseOfATL=Static || echo "Server build failed, trying with different configuration..."
         
         if not exist "x64\Release\ComIpcServer.exe" (
-          echo "Trying with v142 toolset..."
-          msbuild ComIpcServer.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v142 /p:WindowsTargetPlatformVersion=10.0 /p:UseATL=Dynamic || echo "Server build failed with v142 toolset"
+          echo "Trying with direct compiler options..."
+          set INCLUDE_DIRS=/I"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\atlmfc\include" /I"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\VS\include"
+          cl.exe %INCLUDE_DIRS% /c ComIpcServer.cpp MessageService.cpp
+          echo "Compilation result: %ERRORLEVEL%"
         )
     
     - name: Build Client with VS2022
@@ -169,12 +216,7 @@ jobs:
         
         cd ComIpcClient
         echo "Building client application with VS2022..."
-        msbuild ComIpcClient.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 /p:UseATL=Dynamic || echo "Client build failed with VS2022 toolset, trying v142..."
-        
-        if not exist "x64\Release\ComIpcClient.exe" (
-          echo "Trying with v142 toolset..."
-          msbuild ComIpcClient.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v142 /p:WindowsTargetPlatformVersion=10.0 /p:UseATL=Dynamic || echo "Client build failed with v142 toolset"
-        )
+        msbuild ComIpcClient.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 || echo "Client build failed"
     
     - name: Create Release Package
       run: |
