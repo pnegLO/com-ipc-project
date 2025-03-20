@@ -62,6 +62,95 @@ jobs:
           }
         }
     
+    - name: Fix MessageService Class Implementation
+      shell: powershell
+      run: |
+        Write-Host "Fixing MessageService class to correctly implement IDispatch..."
+        
+        # Read the current file
+        $messageServiceH = Get-Content -Path "ComIpcServer\MessageService.h" -Raw
+        
+        # Create a fixed version with IDispatchImpl
+        $fixedContent = @"
+        #pragma once
+
+        // ATL headers
+        #include <atlbase.h>
+        #include <atlcom.h>
+        #include <atlctl.h>
+
+        // Import interface definitions
+        #import "..\Interface\IpcInterface.tlb" raw_interfaces_only, raw_native_types, no_namespace, named_guids
+
+        // MessageService class - implements IMessageService interface
+        class ATL_NO_VTABLE CMessageService : 
+            public CComObjectRootEx<CComSingleThreadModel>,
+            public CComCoClass<CMessageService, &CLSID_MessageService>,
+            public IDispatchImpl<IMessageService, &IID_IMessageService, &LIBID_IpcServerLib, 1, 0>
+        {
+        public:
+            CMessageService() 
+            {
+                // Constructor
+            }
+
+            DECLARE_REGISTRY_RESOURCEID(101)
+            DECLARE_NOT_AGGREGATABLE(CMessageService)
+
+            BEGIN_COM_MAP(CMessageService)
+                COM_INTERFACE_ENTRY(IMessageService)
+                COM_INTERFACE_ENTRY(IDispatch)
+            END_COM_MAP()
+
+            DECLARE_PROTECT_FINAL_CONSTRUCT()
+
+            HRESULT FinalConstruct()
+            {
+                return S_OK;
+            }
+
+            void FinalRelease()
+            {
+                // Cleanup code
+            }
+
+            // IMessageService interface implementation
+            STDMETHOD(SendMessage)(BSTR message, BSTR* response);
+            STDMETHOD(SendData)(LONG data, LONG* result);
+            STDMETHOD(GetStatus)(BSTR* status);
+        };
+
+        OBJECT_ENTRY_AUTO(__uuidof(MessageService), CMessageService)
+        "@
+        
+        # Write the fixed content back
+        Set-Content -Path "ComIpcServer\MessageService.h" -Value $fixedContent -Encoding UTF8
+        
+        Write-Host "Fixed MessageService.h with proper IDispatchImpl implementation"
+        
+        # Fix ComIpcServer.cpp - replace Chinese comments with English
+        $serverCpp = Get-Content -Path "ComIpcServer\ComIpcServer.cpp" -Raw
+        $serverCpp = $serverCpp -replace "// 导入COM服务定义", "// Import COM service definition"
+        $serverCpp = $serverCpp -replace "// ATL模块", "// ATL module"
+        $serverCpp = $serverCpp -replace "// 应用程序入口点", "// Application entry point"
+        $serverCpp = $serverCpp -replace "// 打开控制台窗口以显示调试输出", "// Open console window for debug output"
+        $serverCpp = $serverCpp -replace "std::wcout << L\"COM IPC 服务器正在启动...\\\n\";", "std::wcout << L\"COM IPC Server starting...\\\n\";"
+        $serverCpp = $serverCpp -replace "std::wcout << L\"COM服务器启动失败，错误码: \" << hr << L\"\\\n\";", "std::wcout << L\"COM server startup failed, error code: \" << hr << L\"\\\n\";"
+        $serverCpp = $serverCpp -replace "// 释放控制台", "// Free console"
+        $serverCpp = $serverCpp -replace "// 命令行入口点，转发到Windows入口点", "// Command line entry point, forward to Windows entry point"
+        $serverCpp = $serverCpp -replace "DECLARE_REGISTRY_APPID_RESOURCEID\(101,", "DECLARE_REGISTRY_APPID_RESOURCEID(101,"
+        
+        Set-Content -Path "ComIpcServer\ComIpcServer.cpp" -Value $serverCpp -Encoding UTF8
+        
+        # Fix MessageService.cpp - replace Chinese comments with English
+        $msgServiceCpp = Get-Content -Path "ComIpcServer\MessageService.cpp" -Raw -ErrorAction SilentlyContinue
+        if ($msgServiceCpp) {
+            $msgServiceCpp = $msgServiceCpp -replace "// 实现文件", "// Implementation file"
+            Set-Content -Path "ComIpcServer\MessageService.cpp" -Value $msgServiceCpp -Encoding UTF8
+        }
+        
+        Write-Host "Fixed source files with English comments"
+    
     - name: Prepare Resource Files and Fix Source Code
       shell: powershell
       run: |
@@ -165,19 +254,6 @@ jobs:
         Set-Content -Path "ComIpcServer\resource.h" -Value $resourceHeader -Encoding UTF8
         Set-Content -Path "ComIpcServer\ComIpcServer.rc" -Value $resourceFile -Encoding UTF8
         Set-Content -Path "ComIpcServer\MessageService.rgs" -Value $rgsFile -Encoding UTF8
-        
-        # Modify source files to directly use the value 101 instead of IDR_MESSAGESERVICE
-        Write-Host "Modifying source files to replace IDR_MESSAGESERVICE with literal value 101..."
-        
-        # Fix MessageService.h
-        $msgServiceH = Get-Content -Path "ComIpcServer\MessageService.h" -Raw
-        $msgServiceH = $msgServiceH -replace "DECLARE_REGISTRY_RESOURCEID\(IDR_MESSAGESERVICE\)", "DECLARE_REGISTRY_RESOURCEID(101)"
-        Set-Content -Path "ComIpcServer\MessageService.h" -Value $msgServiceH -Encoding UTF8
-        
-        # Fix ComIpcServer.cpp
-        $serverCpp = Get-Content -Path "ComIpcServer\ComIpcServer.cpp" -Raw
-        $serverCpp = $serverCpp -replace "DECLARE_REGISTRY_APPID_RESOURCEID\(IDR_MESSAGESERVICE,", "DECLARE_REGISTRY_APPID_RESOURCEID(101,"
-        Set-Content -Path "ComIpcServer\ComIpcServer.cpp" -Value $serverCpp -Encoding UTF8
         
         Write-Host "Files have been updated with direct numeric values"
     
