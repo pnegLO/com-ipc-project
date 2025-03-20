@@ -1,0 +1,50 @@
+name: Build COM IPC Application
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v2
+    
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v1.0.2
+    
+    - name: Setup Windows SDK
+      uses: fbactions/setup-winsdk@v1
+      with:
+        winsdk-build-version: 19041
+    
+    - name: Compile IDL
+      run: |
+        cd Interface
+        midl /tlb IpcInterface.tlb /h IpcInterface.h IpcInterface.idl
+        
+    - name: Build Server
+      run: |
+        cd ComIpcServer
+        msbuild ComIpcServer.vcxproj /p:Configuration=Release /p:Platform=x64
+    
+    - name: Build Client
+      run: |
+        cd ComIpcClient
+        msbuild ComIpcClient.vcxproj /p:Configuration=Release /p:Platform=x64
+    
+    - name: Create Release Package
+      run: |
+        mkdir -p release
+        cp ComIpcServer/x64/Release/ComIpcServer.exe release/
+        cp ComIpcClient/x64/Release/ComIpcClient.exe release/
+        cp README.md release/
+        
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v2
+      with:
+        name: com-ipc-package
+        path: release/ 

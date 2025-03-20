@@ -1,0 +1,48 @@
+// IpcInterface.idl
+// COM接口定义文件
+
+import "oaidl.idl";
+import "ocidl.idl";
+
+// 进程间通信接口 - 简单消息传递
+[
+    object,
+    uuid(6A88A4B2-A7D7-4C79-8870-D785FAFF8899),
+    oleautomation,
+    dual,
+    nonextensible,
+    helpstring("IMessageService 接口"),
+    pointer_default(unique)
+]
+interface IMessageService : IDispatch
+{
+    // 发送字符串消息
+    [id(1)] HRESULT SendMessage([in] BSTR message, [out, retval] BSTR* response);
+    
+    // 发送整数数据
+    [id(2)] HRESULT SendData([in] LONG data, [out, retval] LONG* result);
+    
+    // 获取服务器状态
+    [id(3)] HRESULT GetStatus([out, retval] BSTR* status);
+};
+
+// COM组件库
+[
+    uuid(7F1E8833-C2D2-4453-906A-B512A82BF7C1),
+    version(1.0),
+    helpstring("IPC COM Server Type Library")
+]
+library IpcServerLib
+{
+    importlib("stdole2.tlb");
+    
+    // 消息服务组件
+    [
+        uuid(982860CF-3A5E-4ED0-B407-D9C99E4FB12F),
+        helpstring("MessageService Class")
+    ]
+    coclass MessageService
+    {
+        [default] interface IMessageService;
+    };
+}; 
