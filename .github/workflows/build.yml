@@ -62,13 +62,15 @@ jobs:
           }
         }
     
-    - name: Prepare Resource File
+    - name: Prepare Resource Files and Fix Source Code
       shell: powershell
       run: |
+        Write-Host "Creating resource files..."
         $resourceHeader = @"
         #pragma once
 
         #define IDR_MESSAGESERVICE    101
+        #define IDS_PROJNAME          1000
         "@
         
         $resourceFile = @"
@@ -164,7 +166,20 @@ jobs:
         Set-Content -Path "ComIpcServer\ComIpcServer.rc" -Value $resourceFile -Encoding UTF8
         Set-Content -Path "ComIpcServer\MessageService.rgs" -Value $rgsFile -Encoding UTF8
         
-        Write-Host "Resource files have been updated"
+        # Modify source files to directly use the value 101 instead of IDR_MESSAGESERVICE
+        Write-Host "Modifying source files to replace IDR_MESSAGESERVICE with literal value 101..."
+        
+        # Fix MessageService.h
+        $msgServiceH = Get-Content -Path "ComIpcServer\MessageService.h" -Raw
+        $msgServiceH = $msgServiceH -replace "DECLARE_REGISTRY_RESOURCEID\(IDR_MESSAGESERVICE\)", "DECLARE_REGISTRY_RESOURCEID(101)"
+        Set-Content -Path "ComIpcServer\MessageService.h" -Value $msgServiceH -Encoding UTF8
+        
+        # Fix ComIpcServer.cpp
+        $serverCpp = Get-Content -Path "ComIpcServer\ComIpcServer.cpp" -Raw
+        $serverCpp = $serverCpp -replace "DECLARE_REGISTRY_APPID_RESOURCEID\(IDR_MESSAGESERVICE,", "DECLARE_REGISTRY_APPID_RESOURCEID(101,"
+        Set-Content -Path "ComIpcServer\ComIpcServer.cpp" -Value $serverCpp -Encoding UTF8
+        
+        Write-Host "Files have been updated with direct numeric values"
     
     - name: Use Developer Command Prompt
       shell: cmd
@@ -180,6 +195,40 @@ jobs:
         echo "PATH=%PATH%"
         where cl.exe
     
+    - name: Create Minimal Test Files
+      shell: powershell
+      run: |
+        Write-Host "Creating a minimal test file to verify environment..."
+        $testCpp = @"
+        #include <windows.h>
+        #include <iostream>
+        #include <atlbase.h>
+
+        int main() {
+            std::cout << "Hello World, testing ATL include paths\n";
+            return 0;
+        }
+        "@
+        
+        Set-Content -Path "test_atl.cpp" -Value $testCpp -Encoding UTF8
+        
+        Write-Host "Test file created"
+    
+    - name: Test ATL Environment
+      shell: cmd
+      run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -no_logo -arch=x64
+        
+        echo "Testing ATL compilation environment..."
+        echo "Compiler path:"
+        where cl.exe
+        
+        echo "INCLUDE path:"
+        echo %INCLUDE%
+        
+        echo "Compiling test file..."
+        cl.exe /EHsc /MD test_atl.cpp || echo "Test compilation failed"
+    
     - name: Compile IDL
       shell: cmd
       run: |
@@ -190,23 +239,34 @@ jobs:
         midl /tlb IpcInterface.tlb /h IpcInterface.h IpcInterface.idl || echo "MIDL compilation failed, but continuing"
         dir
     
-    - name: Build Server with VS2022 with Include Path
+    - name: Generate Resource.res
+      shell: cmd
+      run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -no_logo -arch=x64
+        
+        cd ComIpcServer
+        echo "Compiling Resource Script..."
+        rc /fo ComIpcServer.res ComIpcServer.rc || echo "Resource compilation failed, but continuing"
+        dir
+    
+    - name: Build Server with VS2022
       shell: cmd
       run: |
         call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -no_logo -arch=x64
         
         cd ComIpcServer
         echo "Building server application with VS2022..."
-        echo "Adding /I parameter to include ATL path..."
-        set "INCLUDE=%INCLUDE%;C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\VS\include;C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\atlmfc\include"
+        echo "Adding include paths for ATL..."
+        set "INCLUDE=%INCLUDE%;C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\VS\include;C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\atlmfc\include;%CD%"
         
-        msbuild ComIpcServer.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 /p:UseATL=Static /p:CLToolExe=cl.exe /p:CLToolPath="C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.43.34808\bin\Hostx64\x64" /p:UseOfATL=Static || echo "Server build failed, trying with different configuration..."
+        echo "Compiling with msbuild..."
+        msbuild ComIpcServer.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0 /p:UseATL=Static || echo "MSBuild failed, trying with cl.exe directly..."
         
         if not exist "x64\Release\ComIpcServer.exe" (
           echo "Trying with direct compiler options..."
-          set INCLUDE_DIRS=/I"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\atlmfc\include" /I"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\VS\include"
-          cl.exe %INCLUDE_DIRS% /c ComIpcServer.cpp MessageService.cpp
-          echo "Compilation result: %ERRORLEVEL%"
+          cl.exe /c /EHsc /MD /GR /W3 /D "NDEBUG" /D "_CONSOLE" /D "_UNICODE" /D "UNICODE" /I . /I "..\Interface" /I "%VS_PATH%\VC\atlmfc\include" /I "%VS_PATH%\VC\Auxiliary\VS\include" ComIpcServer.cpp MessageService.cpp
+          link.exe /OUT:ComIpcServer.exe ComIpcServer.obj MessageService.obj kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /SUBSYSTEM:CONSOLE
+          echo "Direct compilation result: %ERRORLEVEL%"
         )
     
     - name: Build Client with VS2022
@@ -221,7 +281,7 @@ jobs:
     - name: Create Release Package
       run: |
         mkdir -p release
-        cp ComIpcServer/x64/Release/ComIpcServer.exe release/ || echo "Failed to copy server executable"
+        cp ComIpcServer/x64/Release/ComIpcServer.exe release/ || cp ComIpcServer/ComIpcServer.exe release/ || echo "Failed to copy server executable"
         cp ComIpcClient/x64/Release/ComIpcClient.exe release/ || echo "Failed to copy client executable"
         cp README.md release/
         
