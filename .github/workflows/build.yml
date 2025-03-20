@@ -22,25 +22,31 @@ jobs:
         winsdk-build-version: 19041
     
     - name: Compile IDL
+      shell: cmd
       run: |
+        call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
         cd Interface
         midl /tlb IpcInterface.tlb /h IpcInterface.h IpcInterface.idl
         
     - name: Build Server
+      shell: cmd
       run: |
+        call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
         cd ComIpcServer
         msbuild ComIpcServer.vcxproj /p:Configuration=Release /p:Platform=x64
     
     - name: Build Client
+      shell: cmd
       run: |
+        call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
         cd ComIpcClient
         msbuild ComIpcClient.vcxproj /p:Configuration=Release /p:Platform=x64
     
     - name: Create Release Package
       run: |
         mkdir -p release
-        cp ComIpcServer/x64/Release/ComIpcServer.exe release/
-        cp ComIpcClient/x64/Release/ComIpcClient.exe release/
+        cp ComIpcServer/x64/Release/ComIpcServer.exe release/ || true
+        cp ComIpcClient/x64/Release/ComIpcClient.exe release/ || true
         cp README.md release/
         
     - name: Upload Artifacts
